@@ -1,0 +1,67 @@
+name: Collect Diagnostics
+description: Collect pod logs, events, and health checks for CI debugging
+
+inputs:
+  namespace:
+    description: 'Kubernetes namespace to collect from'
+    required: false
+    default: 'test'
+  output-dir:
+    description: 'Directory to write diagnostics into'
+    required: false
+    default: 'diagnostics'
+
+runs:
+  using: composite
+  steps:
+    - name: Collect diagnostics
+      shell: bash
+      run: |
+        NS="${{ inputs.namespace }}"
+        DIR="${{ inputs.output-dir }}"
+        mkdir -p "$DIR/pods_logs"
+
+        # 1. Pod status overview
+        kubectl get pods -n "$NS" -o wide > "$DIR/pods-overview.txt" 2>&1 || true
+
+        # 2. Warning events
+        kubectl get events -n "$NS" --field-selector type=Warning --sort-by='.lastTimestamp' > "$DIR/events-overview.txt" 2>&1 || true
+
+        # 3-8. Pod logs
+        declare -A POD_TAILS=(
+          ["agent-service"]=500
+          ["integration-dispatcher"]=500
+          ["request-manager"]=500
+          ["llamastack"]=300
+          ["zammad-railsserver"]=300
+          ["mcp-zammad"]=300
+        )
+        for pattern in "${!POD_TAILS[@]}"; do
+          tail=${POD_TAILS[$pattern]}
+          pod=$(kubectl get pods -n "$NS" --no-headers 2>/dev/null | grep "$pattern" | grep -v "Completed" | awk '{print $1}' | head -1)
+          if [ -n "$pod" ]; then
+            kubectl logs "$pod" -n "$NS" --tail="$tail" > "$DIR/pods_logs/${pattern}.log" 2>&1 || true
+          fi
+        done
+
+        # 9. Health checks
+        AGENT_POD=$(kubectl get pods -n "$NS" --no-headers 2>/dev/null | grep "agent-service" | grep -v "Completed" | awk '{print $1}' | head -1)
+        if [ -n "$AGENT_POD" ]; then
+          kubectl exec "$AGENT_POD" -n "$NS" -- curl -sf http://localhost:8080/health > "$DIR/diagnostics-log-agent-service.log" 2>&1 || echo "unreachable" > "$DIR/diagnostics-log-agent-service.log"
+        fi
+
+        REQ_POD=$(kubectl get pods -n "$NS" --no-headers 2>/dev/null | grep "request-manager" | grep -v "Completed" | awk '{print $1}' | head -1)
+        if [ -n "$REQ_POD" ]; then
+          kubectl exec "$REQ_POD" -n "$NS" -- curl -sf http://localhost:8080/health > "$DIR/diagnostics-log-request-manager.log" 2>&1 || echo "unreachable" > "$DIR/diagnostics-log-request-manager.log"
+        fi
+
+        LLAMA_POD=$(kubectl get pods -n "$NS" --no-headers 2>/dev/null | grep "llamastack" | grep -v "Completed" | awk '{print $1}' | head -1)
+        if [ -n "$LLAMA_POD" ]; then
+          kubectl exec "$LLAMA_POD" -n "$NS" -- curl -sf http://localhost:8321/v1/models > "$DIR/diagnostics-log-llamastack.log" 2>&1 || echo "unreachable" > "$DIR/diagnostics-log-llamastack.log"
+        fi
+
+        # Clean up empty files
+        find "$DIR" -type f -empty -delete 2>/dev/null || true
+
+        echo "Diagnostics collected:"
+        find "$DIR" -type f | sort

@@ -99,13 +99,20 @@ jobs:
         with:
           artifactPrefix: self-service-agent-scout-deploy
 
+      - name: Collect diagnostics
+        if: always()
+        uses: ./.github/actions/collect-diagnostics
+        with:
+          namespace: ${{ env.E2E_NAMESPACE }}
+          output-dir: it-self-service-agent/evaluations/diagnostics
+
       - name: Create evaluations tarball
         if: always()
         shell: bash
         run: |
           if [ -d "it-self-service-agent/evaluations/results" ]; then
-            tar -czf evaluations-results-scout-deploy-${{ github.run_id }}.tar.gz -C it-self-service-agent/evaluations results/
-            echo "Tarball created successfully from it-self-service-agent/evaluations/results/"
+            tar -czf evaluations-results-scout-deploy-${{ github.run_id }}.tar.gz -C it-self-service-agent/evaluations results/ diagnostics/
+            echo "Tarball created successfully from it-self-service-agent/evaluations/results/ and diagnostics/"
             ls -lh evaluations-results-scout-deploy-${{ github.run_id }}.tar.gz
           else
             echo "evaluations/results directory not found, creating empty marker"
