@@ -41,6 +41,9 @@ runs:
           pod=$(kubectl get pods -n "$NS" --no-headers 2>/dev/null | grep "$pattern" | grep -v "Completed" | awk '{print $1}' | head -1)
           if [ -n "$pod" ]; then
             kubectl logs "$pod" -n "$NS" --tail="$tail" > "$DIR/pods_logs/${pattern}.log" 2>&1 || true
+            if [ "$pattern" = "llamastack" ]; then
+              kubectl logs "$pod" -n "$NS" --previous --tail="$tail" > "$DIR/pods_logs/${pattern}-previous.log" 2>&1 || true
+            fi
           fi
         done
 
